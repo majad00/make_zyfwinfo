@@ -1,12 +1,13 @@
-# make_zyfwinfo.sh
+# Make_zyfwinfo.sh
 
-`make_zyfwinfo.sh` creates a **rich-format `zyfwinfo` file** for Zyxel EX5601-T0 / T56 devices.
+>`make_zyfwinfo.sh` creates a **rich-format `zyfwinfo` file** for Zyxel EX5601-T0 / T56 devices.
 
 The tool starts from an existing OEM or known-good `zyfwinfo` template, preserves its unknown metadata, updates the fields needed for rich-format boot selection, recalculates the checksum, and verifies the completed file before reporting success.
 
 The generated file can later be copied to the router and written to a `zyfwinfo` UBI volume.
 
 ---
+> This script is part of the tool "Openwr loader",  https://github.com/majad00/ex5601_openwrt_loader/releases/tag/1.1
 
 ## What the script changes
 
