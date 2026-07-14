@@ -1,28 +1,52 @@
-# Make_zyfwinfo.sh
+# make_zyfwinfo
 
->`make_zyfwinfo.sh` creates a **rich-format `zyfwinfo` file** for Zyxel EX5601-T0 / T56 devices.
+`make_zyfwinfo.sh` creates a rich-format `zyfwinfo` file for Zyxel EX5601-T0 / T56 devices.
 
-The tool starts from an existing OEM or known-good `zyfwinfo` template, preserves its unknown metadata, updates the fields needed for rich-format boot selection, recalculates the checksum, and verifies the completed file before reporting success.
+The script starts from an existing OEM or known-good `zyfwinfo` template. It preserves unknown OEM metadata, changes the requested boot fields, recalculates the header checksum, and verifies the finished file.
 
-The generated file can later be copied to the router and written to a `zyfwinfo` UBI volume.
+The generated file can later be copied to a router and written to a `zyfwinfo` UBI volume. The script itself does not write NAND or UBI.
 
 ---
-> This script is part of the tool "Openwr loader",  https://github.com/majad00/ex5601_openwrt_loader/releases/tag/1.1
 
-## What the script changes
+## Important correction: offsets `0x08–0x09`
 
-The script preserves the template contents except for these fields:
+Offsets `0x08` and `0x09` are handled together as one 16-bit little-endian value. They are not treated as two independent flags.
 
-| Offset | Size | Value / purpose |
+Examples:
+
+```text
+bytes 00 01 = 0x0100 = 256
+bytes 00 04 = 0x0400 = 1024
+```
+
+This value appears to correspond to the OEM JSON field named `blocksize`, expressed in KiB:
+
+```json
+"blocksize": "256kB"
+```
+
+The exact relationship between this field and the number of bytes zloader reads from `zyfwinfo` is not yet conclusively proven. For that reason:
+
+- The script preserves offsets `0x08–0x09` from the template by default.
+- The field changes only when `--blocksize-kib` is supplied.
+- `--blocksize-kib` and `--output-size` remain separate options.
+
+The script no longer forces byte `0x09` to `4` by itself.
+
+---
+
+## Fields modified by the script
+
+| Offset | Size | Behavior |
 |---|---:|---|
 | `0x00` | 4 bytes | Must already contain `EXYZ` |
-| `0x04` | 1 byte | Forced to `0x03` for rich format |
+| `0x04` | 1 byte | Forced to `0x03` for the rich structure version |
 | `0x06` | 1 byte | Boot sequence supplied with `--seq` |
-| `0x09` | 1 byte | Forced to `0x04` for rich format |
+| `0x08` | 2 bytes | LE16 blocksize value; preserved unless overridden |
 | `0x78` | 4 bytes | Rootfs load size, little-endian |
-| `0xFE` | 2 bytes | Checksum, little-endian |
+| `0xFE` | 2 bytes | Header checksum, little-endian |
 
-The checksum is calculated as:
+The checksum is:
 
 ```text
 sum of bytes 0x00 through 0xFD, modulo 65536
@@ -30,18 +54,17 @@ sum of bytes 0x00 through 0xFD, modulo 65536
 
 The low checksum byte is stored at `0xFE`, and the high byte at `0xFF`.
 
-The output is always at least `0x400` bytes because newer zloader versions may read `0x400` bytes from the `zyfwinfo` volume.
+The output is always at least `0x400` bytes because newer zloader versions may read `0x400` bytes from `zyfwinfo`.
 
 ---
 
 ## Requirements
 
-The script is written for a POSIX-style shell and uses common Unix utilities:
+The script uses common Unix utilities:
 
 ```text
 awk
 dd
-grep
 od
 sed
 tr
@@ -55,15 +78,13 @@ hexdump
 sha256sum
 ```
 
-If `hexdump` is unavailable, the script uses `od` for its final preview.
-
-Make the script executable:
+Make it executable:
 
 ```sh
 chmod +x make_zyfwinfo.sh
 ```
 
-Show built-in help:
+Show help:
 
 ```sh
 ./make_zyfwinfo.sh --help
@@ -71,67 +92,173 @@ Show built-in help:
 
 ---
 
-## Required arguments
+## Basic usage
+
+```sh
+./make_zyfwinfo.sh \
+    --template OEM_ZYFWINFO \
+    --output NEW_ZYFWINFO \
+    --seq SEQUENCE \
+    ROOTFS_SIZE_OPTION \
+    [OPTIONS]
+```
+
+Required arguments:
 
 ```text
 --template FILE
+--output FILE
+--seq N
 ```
+
+Choose exactly one rootfs-size option:
+
+```text
+--rootfs FILE
+--rootfs-size N
+--empty-rootfs
+```
+
+---
+
+## Required arguments
+
+### `--template FILE`
 
 Existing OEM or known-good `zyfwinfo` template.
 
 The template:
 
 - Must be at least 256 bytes.
-- Must begin with the magic `EXYZ`.
-- Should preferably come from the same model or firmware family.
-- May be a 256-byte dump, a `0x400`-byte dump, or a complete UBI LEB dump.
+- Must begin with `EXYZ`.
+- Should preferably come from the same model and firmware family.
+- May be a 256-byte header, a `0x400`-byte file, or a complete UBI LEB dump.
 
-```text
---output FILE
-```
+Unknown fields are copied from this template.
+
+### `--output FILE`
 
 Destination filename for the generated rich `zyfwinfo`.
 
-The input and output paths must be different.
+The input and output files must be different.
 
-```text
---seq N
-```
+### `--seq N`
 
 Boot sequence byte from `0` to `255`.
 
-Decimal and hexadecimal forms are supported:
+Decimal and hexadecimal values are accepted:
 
 ```text
 5
 0x05
 ```
 
-Normally the new sequence should be one higher than the currently active bank:
+Normally, the target bank is given a sequence one higher than the active bank:
 
 ```text
 new sequence = active sequence + 1
 ```
 
+The script does not automatically wrap `255` back to `0`.
+
+---
+
+## Blocksize field
+
+### Preserve the template value
+
+This is the default and safest behavior:
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --empty-rootfs
+```
+
+The script reads the LE16 value at offsets `0x08–0x09` and copies it unchanged.
+
+### Override the value
+
+Use:
+
+```text
+--blocksize-kib N
+```
+
+The accepted range is `0..65535`. Decimal and hexadecimal values are accepted.
+
+For 256 KiB:
+
+```sh
+--blocksize-kib 256
+```
+
+The generated bytes are:
+
+```text
+00 01
+```
+
+For 1024 KiB:
+
+```sh
+--blocksize-kib 1024
+```
+
+The generated bytes are:
+
+```text
+00 04
+```
+
+Full example:
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --rootfs root.squashfs \
+    --blocksize-kib 1024 \
+    --output-size 0x400
+```
+
+### Blocksize and output size are independent
+
+The script does not assume that these must contain the same numeric value:
+
+```text
+--blocksize-kib 1024
+--output-size 0x400
+```
+
+`--blocksize-kib 1024` writes the LE16 value `0x0400` to offsets `0x08–0x09`.
+
+`--output-size 0x400` creates a 1024-byte output file.
+
+They may be related in some OEM formats, but the script keeps them independent until that relationship is proven.
+
 ---
 
 ## Rootfs-size options
 
-Choose exactly one of the following.
+Choose exactly one.
 
-### Read the size from a SquashFS rootfs
+### Read the size from SquashFS
 
 ```text
 --rootfs FILE
 ```
 
-The rootfs file must begin with little-endian SquashFS magic:
+The file must begin with little-endian SquashFS magic:
 
 ```text
 hsqs
 ```
 
-The script reads the 64-bit little-endian SquashFS `bytes_used` field at offset `0x28`, rounds it up to the next 4096-byte boundary, and stores the result at `zyfwinfo` offset `0x78`.
+The script reads the 64-bit little-endian SquashFS `bytes_used` field at offset `0x28`, rounds it up to the next 4096-byte boundary, and stores it at `zyfwinfo` offset `0x78`.
 
 Example:
 
@@ -143,13 +270,13 @@ Example:
     --rootfs root.squashfs
 ```
 
-### Supply the rootfs load size manually
+### Supply the load size manually
 
 ```text
 --rootfs-size N
 ```
 
-The supplied value may be decimal or hexadecimal. It is rounded up to the next 4096-byte boundary.
+The value may be decimal or hexadecimal. It is rounded up to the next 4096-byte boundary.
 
 Example:
 
@@ -161,21 +288,13 @@ Example:
     --rootfs-size 0x02ad5000
 ```
 
-### Create metadata for an empty rootfs placeholder
+### Use an empty rootfs placeholder
 
 ```text
 --empty-rootfs
 ```
 
-This stores:
-
-```text
-0x00000000
-```
-
-at offset `0x78`.
-
-This is useful for an initramfs staging bank where the `rootfs` UBI volume is intentionally empty.
+This stores `0x00000000` at offset `0x78`.
 
 Example:
 
@@ -190,21 +309,15 @@ Example:
 
 ---
 
-## Optional arguments
+## Other options
 
-### Set the exact output size
+### `--output-size N`
 
-```text
---output-size N
-```
+Sets the exact output size.
 
-The output size must be at least 1024 bytes (`0x400`).
-
-Decimal and hexadecimal forms are accepted.
-
-If this option is omitted:
-
-- The original template size is preserved when it is larger than 1024 bytes.
+- Minimum: 1024 bytes (`0x400`).
+- Decimal and hexadecimal forms are accepted.
+- If omitted, the template size is preserved when it is larger than 1024 bytes.
 - Otherwise, the output is expanded to 1024 bytes.
 
 Examples:
@@ -219,17 +332,9 @@ Examples:
 
 `253952` bytes is a common EX5601-T0 UBI logical eraseblock size.
 
-### Choose the padding byte
+### `--pad-byte ff|00`
 
-```text
---pad-byte ff
-```
-
-or:
-
-```text
---pad-byte 00
-```
+Chooses padding when the requested output is larger than the template.
 
 Default:
 
@@ -237,23 +342,25 @@ Default:
 ff
 ```
 
-Padding is only added when the requested output is larger than the template.
+Examples:
 
-### Quiet mode
-
-```text
---quiet
+```sh
+--pad-byte ff
 ```
 
-Suppresses the final verification report.
+```sh
+--pad-byte 00
+```
 
-Errors are still printed.
+### `--quiet`
+
+Suppresses the final report. Errors are still printed.
 
 ---
 
 ## Complete examples
 
-### Create a rich file from an OEM template and SquashFS rootfs
+### Preserve the template blocksize
 
 ```sh
 ./make_zyfwinfo.sh \
@@ -263,7 +370,18 @@ Errors are still printed.
     --rootfs openwrt-rootfs.squashfs
 ```
 
-### Create a `0x400`-byte rich file for initramfs staging
+### Explicit 256 KiB blocksize
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --rootfs openwrt-rootfs.squashfs \
+    --blocksize-kib 256
+```
+
+### Explicit 1024 KiB blocksize and `0x400` output
 
 ```sh
 ./make_zyfwinfo.sh \
@@ -271,10 +389,11 @@ Errors are still printed.
     --output target_zyfwinfo.bin \
     --seq 6 \
     --empty-rootfs \
+    --blocksize-kib 1024 \
     --output-size 0x400
 ```
 
-### Create a complete LEB-sized output
+### Complete LEB-sized output
 
 ```sh
 ./make_zyfwinfo.sh \
@@ -286,72 +405,101 @@ Errors are still printed.
     --pad-byte ff
 ```
 
-### Use a manually calculated rootfs load size
-
-```sh
-./make_zyfwinfo.sh \
-    --template active_zyfwinfo.bin \
-    --output target_zyfwinfo.bin \
-    --seq 10 \
-    --rootfs-size 0x02810000 \
-    --output-size 253952
-```
-
 ---
 
-## Successful output
+## Successful report
 
-A normal successful run prints a report similar to:
+A normal run prints a report similar to:
 
 ```text
 Rich zyfwinfo created successfully.
 Template:             active_zyfwinfo.bin
-Template size:        253952 bytes
+Template size:        1024 bytes
 Output:               target_zyfwinfo.bin
-Output size:          253952 bytes
+Output size:          1024 bytes
 Magic:                EXYZ
-Rich byte 0x04:       3
+Structure byte 0x04:  3
 Sequence byte 0x06:   6
-Rich byte 0x09:       4
-Rootfs source:        SquashFS bytes_used=...
-Rootfs load size:     0x02810000 (...)
+Blocksize field 0x08: 0x0400 (1024 kB, bytes 00 04)
+Blocksize source:     preserved from template
+Rootfs source:        empty rootfs
+Rootfs load size:     0x00000000 (0 bytes)
 Checksum calculated:  0x....
 Checksum stored:      0x....
 ```
 
-The script does not report success unless all final checks pass.
+If `--blocksize-kib` was supplied, the report says:
+
+```text
+Blocksize source:     overridden by --blocksize-kib
+```
+
+The script reports success only after all checks pass.
 
 ---
 
-## Validation performed by the script
+## Validation
 
 Before creating the output, the script verifies:
 
-- The template exists.
-- The template and output paths differ.
+- The template exists and is readable.
+- The input and output paths differ.
 - The template is at least 256 bytes.
 - The template begins with `EXYZ`.
 - The sequence is between `0` and `255`.
 - Exactly one rootfs-size source was selected.
-- A supplied rootfs has `hsqs` SquashFS magic.
-- The calculated load size fits in a 32-bit field.
+- A supplied rootfs begins with `hsqs`.
+- The rootfs load size fits in the 32-bit field.
+- The optional blocksize fits in the 16-bit field.
 - The requested output is at least `0x400` bytes.
 
 After creating the output, it verifies:
 
 - Magic remains `EXYZ`.
 - Byte `0x04` is `3`.
-- Sequence at `0x06` matches the requested value.
-- Byte `0x09` is `4`.
+- Sequence at `0x06` is correct.
+- The LE16 value at `0x08–0x09` is correct.
 - Rootfs load size at `0x78` is correct.
 - Calculated and stored checksums match.
-- The final output size is correct.
+- Final file size is correct.
 
 ---
 
-## Copying the file to the router
+## Checking the result manually
 
-Example using `scp`:
+Show the header:
+
+```sh
+hexdump -C target_zyfwinfo.bin | head -32
+```
+
+For sequence `6` and blocksize `1024`, the first bytes should resemble:
+
+```text
+45 58 59 5a 03 00 06 00 00 04
+```
+
+Interpretation:
+
+```text
+45 58 59 5a = EXYZ
+03          = rich structure/version byte
+06          = sequence
+00 04       = LE16 0x0400 = 1024
+```
+
+Read the blocksize field with shell tools:
+
+```sh
+set -- $(dd if=target_zyfwinfo.bin bs=1 skip=8 count=2 2>/dev/null | od -An -t u1)
+echo $(( $1 + $2 * 256 ))
+```
+
+---
+
+## Copying to the router
+
+Example:
 
 ```sh
 scp target_zyfwinfo.bin root@192.168.1.1:/tmp/
@@ -365,37 +513,30 @@ sha256sum /tmp/target_zyfwinfo.bin
 hexdump -C /tmp/target_zyfwinfo.bin | head -32
 ```
 
-Expected header pattern:
-
-```text
-45 58 59 5a 03 00 SS 00 00 04
-```
-
-Where `SS` is the selected sequence byte.
-
 ---
 
 ## Writing to a router
 
-This utility only creates the file. It does **not** write NAND or UBI volumes.
+The script only creates a file. It does not write flash.
 
-Before writing anything:
+Before writing:
 
-- Confirm the target device and bank.
-- Confirm the target volume is named `zyfwinfo`.
-- Back up the current `zyfwinfo`.
-- Confirm the new sequence is intentional.
-- Confirm the rootfs-size field matches the rootfs in the same bank.
+- Confirm the correct router and target bank.
+- Resolve the `zyfwinfo` UBI volume by name.
+- Back up the current target volume.
+- Confirm the sequence is intentional.
+- Confirm the rootfs-size field matches that bank's rootfs.
+- Confirm the blocksize field should be preserved or intentionally overridden.
 
-A typical UBI write may look like:
+A typical write may look like:
 
 ```sh
 ubiupdatevol /dev/ubiX_Y /tmp/target_zyfwinfo.bin
 ```
 
-The exact `/dev/ubiX_Y` path varies between routers and boot states. Resolve the volume by name instead of assuming fixed UBI numbers.
+Do not assume fixed UBI numbers. Resolve the target by volume name.
 
-Read back and compare after writing:
+Read back and compare:
 
 ```sh
 dd if=/dev/ubiX_Y of=/tmp/zyfwinfo.readback.bin \
@@ -404,19 +545,19 @@ dd if=/dev/ubiX_Y of=/tmp/zyfwinfo.readback.bin \
 cmp /tmp/target_zyfwinfo.bin /tmp/zyfwinfo.readback.bin
 ```
 
-Do not reboot after a failed write or failed readback comparison.
+Do not reboot after a failed write or failed comparison.
 
 ---
 
 ## Extracting a template from a router
 
-After identifying the correct active `zyfwinfo` UBI volume, copy at least `0x400` bytes:
+Copy at least `0x400` bytes after identifying the correct `zyfwinfo` volume:
 
 ```sh
 dd if=/dev/ubiX_Y of=/tmp/oem_zyfwinfo.bin bs=1024 count=1
 ```
 
-To preserve the complete logical eraseblock:
+To preserve a complete logical eraseblock:
 
 ```sh
 LEB_SIZE="$(cat /sys/class/ubi/ubiX/usable_eb_size)"
@@ -437,9 +578,7 @@ scp root@192.168.1.1:/tmp/oem_zyfwinfo.bin .
 
 ### `template magic is not EXYZ`
 
-The supplied template is not a valid `zyfwinfo` file, or the dump began at the wrong offset.
-
-Check:
+The file is not a valid `zyfwinfo` template, or it was extracted from the wrong offset.
 
 ```sh
 dd if=oem_zyfwinfo.bin bs=4 count=1 2>/dev/null
@@ -453,13 +592,7 @@ EXYZ
 
 ### `rootfs is not little-endian SquashFS`
 
-The supplied file does not begin with `hsqs`.
-
-Check:
-
-```sh
-dd if=root.squashfs bs=4 count=1 2>/dev/null | hexdump -C
-```
+The supplied rootfs does not begin with `hsqs`.
 
 Expected bytes:
 
@@ -469,7 +602,7 @@ Expected bytes:
 
 ### `choose exactly one rootfs size source`
 
-Use only one of:
+Use exactly one of:
 
 ```text
 --rootfs
@@ -477,19 +610,20 @@ Use only one of:
 --empty-rootfs
 ```
 
-### `output must be at least 1024 bytes`
+### `--blocksize-kib must be 0..65535`
 
-Rich-format output must be at least `0x400` bytes because newer zloader versions may read that amount.
+The blocksize field is a 16-bit unsigned value.
 
-### Sequence overflow
-
-The sequence is one byte, so the accepted range is:
+Common tested interpretations are:
 
 ```text
-0 through 255
+256  -> bytes 00 01
+1024 -> bytes 00 04
 ```
 
-The script does not implement wraparound automatically.
+### `output must be at least 1024 bytes`
+
+Rich output must be at least `0x400` bytes.
 
 ---
 
@@ -497,17 +631,18 @@ The script does not implement wraparound automatically.
 
 `zyfwinfo` affects boot-bank selection and may contain firmware metadata used by zloader.
 
-An incorrect sequence, checksum, rootfs size, or target volume can prevent the intended bank from booting.
+An incorrect sequence, checksum, rootfs size, blocksize, or target volume may prevent the intended bank from booting.
 
 Recommended workflow:
 
-1. Back up both banks’ current `zyfwinfo` volumes.
-2. Create the file from a template belonging to the same device or firmware family.
-3. Verify the generated report.
-4. Copy the file to the router.
-5. Write only the intended inactive bank.
-6. Read the complete file back and compare it.
-7. Reboot only after successful verification.
+1. Back up both banks' `zyfwinfo` volumes.
+2. Use a template from the same model and firmware family.
+3. Preserve the template blocksize unless there is evidence it must change.
+4. Verify the report and header bytes.
+5. Copy the file to the router.
+6. Write only the intended inactive bank.
+7. Read the file back and compare it.
+8. Reboot only after successful verification.
 
 ---
 

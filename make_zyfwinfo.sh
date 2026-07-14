@@ -1,5 +1,5 @@
 #!/bin/sh
-# written by qurehsi majad at lut.fi 
+# written by Qureshi
 # Create an EX5601-T0/T56 rich zyfwinfo file from an existing template.
 # The template preserves unknown OEM metadata. Output is always >= 0x400 bytes.
 
