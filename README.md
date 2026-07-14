@@ -2,6 +2,8 @@
 
 `make_zyfwinfo.sh` creates a rich-format `zyfwinfo` file for Zyxel EX5601-T0 / T56 devices.
 
+> the script is part of openwrt uart free installer (https://github.com/majad00/ex5601_openwrt_loader)
+
 The script starts from an existing OEM or known-good `zyfwinfo` template. It preserves unknown OEM metadata, changes the requested boot fields, recalculates the header checksum, and verifies the finished file.
 
 The generated file can later be copied to a router and written to a `zyfwinfo` UBI volume. The script itself does not write NAND or UBI.
