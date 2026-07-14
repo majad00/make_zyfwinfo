@@ -8,7 +8,7 @@ The generated file can later be copied to a router and written to a `zyfwinfo` U
 
 ---
 
-## Important correction: offsets `0x08–0x09`
+## Fix 1: Important correction: offsets `0x08–0x09`
 
 Offsets `0x08` and `0x09` are handled together as one 16-bit little-endian value. They are not treated as two independent flags.
 
