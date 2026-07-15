@@ -10,6 +10,115 @@ The generated file can later be copied to a router and written to a `zyfwinfo` U
 
 ---
 
+## Extracting a template from a router
+
+Copy at least `0x400` bytes after identifying the correct `zyfwinfo` volume:
+
+```sh
+dd if=/dev/ubiX_Y of=/tmp/oem_zyfwinfo.bin bs=1024 count=1
+```
+
+To preserve a complete logical eraseblock:
+
+```sh
+LEB_SIZE="$(cat /sys/class/ubi/ubiX/usable_eb_size)"
+
+dd if=/dev/ubiX_Y of=/tmp/oem_zyfwinfo.bin \
+    bs="$LEB_SIZE" count=1
+```
+
+Copy it to the computer:
+
+```sh
+scp root@192.168.1.1:/tmp/oem_zyfwinfo.bin .
+```
+
+---
+
+
+
+## Complete examples
+
+### Preserve the template blocksize
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --rootfs openwrt-rootfs.squashfs
+```
+
+### Explicit 256 KiB blocksize
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --rootfs openwrt-rootfs.squashfs \
+    --blocksize-kib 256
+```
+
+### Explicit 1024 KiB blocksize and `0x400` output
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --empty-rootfs \
+    --blocksize-kib 1024 \
+    --output-size 0x400
+```
+
+### Complete LEB-sized output
+
+```sh
+./make_zyfwinfo.sh \
+    --template active_zyfwinfo.bin \
+    --output target_zyfwinfo.bin \
+    --seq 6 \
+    --rootfs openwrt-rootfs.squashfs \
+    --output-size 253952 \
+    --pad-byte ff
+```
+
+---
+
+## Successful report
+
+A normal run prints a report similar to:
+
+```text
+Rich zyfwinfo created successfully.
+Template:             active_zyfwinfo.bin
+Template size:        1024 bytes
+Output:               target_zyfwinfo.bin
+Output size:          1024 bytes
+Magic:                EXYZ
+Structure byte 0x04:  3
+Sequence byte 0x06:   6
+Blocksize field 0x08: 0x0400 (1024 kB, bytes 00 04)
+Blocksize source:     preserved from template
+Rootfs source:        empty rootfs
+Rootfs load size:     0x00000000 (0 bytes)
+Checksum calculated:  0x....
+Checksum stored:      0x....
+```
+
+If `--blocksize-kib` was supplied, the report says:
+
+```text
+Blocksize source:     overridden by --blocksize-kib
+```
+
+The script reports success only after all checks pass.
+
+---
+
+
+
 ## Fix 1: Important correction: offsets `0x08–0x09`
 
 Offsets `0x08` and `0x09` are handled together as one 16-bit little-endian value. They are not treated as two independent flags.
@@ -360,86 +469,6 @@ Suppresses the final report. Errors are still printed.
 
 ---
 
-## Complete examples
-
-### Preserve the template blocksize
-
-```sh
-./make_zyfwinfo.sh \
-    --template active_zyfwinfo.bin \
-    --output target_zyfwinfo.bin \
-    --seq 6 \
-    --rootfs openwrt-rootfs.squashfs
-```
-
-### Explicit 256 KiB blocksize
-
-```sh
-./make_zyfwinfo.sh \
-    --template active_zyfwinfo.bin \
-    --output target_zyfwinfo.bin \
-    --seq 6 \
-    --rootfs openwrt-rootfs.squashfs \
-    --blocksize-kib 256
-```
-
-### Explicit 1024 KiB blocksize and `0x400` output
-
-```sh
-./make_zyfwinfo.sh \
-    --template active_zyfwinfo.bin \
-    --output target_zyfwinfo.bin \
-    --seq 6 \
-    --empty-rootfs \
-    --blocksize-kib 1024 \
-    --output-size 0x400
-```
-
-### Complete LEB-sized output
-
-```sh
-./make_zyfwinfo.sh \
-    --template active_zyfwinfo.bin \
-    --output target_zyfwinfo.bin \
-    --seq 6 \
-    --rootfs openwrt-rootfs.squashfs \
-    --output-size 253952 \
-    --pad-byte ff
-```
-
----
-
-## Successful report
-
-A normal run prints a report similar to:
-
-```text
-Rich zyfwinfo created successfully.
-Template:             active_zyfwinfo.bin
-Template size:        1024 bytes
-Output:               target_zyfwinfo.bin
-Output size:          1024 bytes
-Magic:                EXYZ
-Structure byte 0x04:  3
-Sequence byte 0x06:   6
-Blocksize field 0x08: 0x0400 (1024 kB, bytes 00 04)
-Blocksize source:     preserved from template
-Rootfs source:        empty rootfs
-Rootfs load size:     0x00000000 (0 bytes)
-Checksum calculated:  0x....
-Checksum stored:      0x....
-```
-
-If `--blocksize-kib` was supplied, the report says:
-
-```text
-Blocksize source:     overridden by --blocksize-kib
-```
-
-The script reports success only after all checks pass.
-
----
-
 ## Validation
 
 Before creating the output, the script verifies:
@@ -548,31 +577,6 @@ cmp /tmp/target_zyfwinfo.bin /tmp/zyfwinfo.readback.bin
 ```
 
 Do not reboot after a failed write or failed comparison.
-
----
-
-## Extracting a template from a router
-
-Copy at least `0x400` bytes after identifying the correct `zyfwinfo` volume:
-
-```sh
-dd if=/dev/ubiX_Y of=/tmp/oem_zyfwinfo.bin bs=1024 count=1
-```
-
-To preserve a complete logical eraseblock:
-
-```sh
-LEB_SIZE="$(cat /sys/class/ubi/ubiX/usable_eb_size)"
-
-dd if=/dev/ubiX_Y of=/tmp/oem_zyfwinfo.bin \
-    bs="$LEB_SIZE" count=1
-```
-
-Copy it to the computer:
-
-```sh
-scp root@192.168.1.1:/tmp/oem_zyfwinfo.bin .
-```
 
 ---
 
